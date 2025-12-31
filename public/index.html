@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -10,16 +10,22 @@
     <div class="container">
       <header>
         <h1>YouTube Shorts Loop</h1>
-        <p class="muted">Enter a channel URL (e.g., https://www.youtube.com/@AnimeHouse2658)</p>
+        <p class="muted">
+          Enter a channel URL (e.g., https://www.youtube.com/@AnimeHouse2658)
+        </p>
       </header>
 
       <div class="controls">
         <input id="channel-input" placeholder="Channel URL" />
         <button id="fetch-btn">Fetch</button>
         <button id="more-btn" disabled>Load More</button>
+        <button id="next-btn" title="Play next video">Next</button>
+        <button id="reverse-btn" title="Toggle playback direction">
+          Direction: →
+        </button>
       </div>
 
-      <div id="error" class="error" style="display:none"></div>
+      <div id="error" class="error" style="display: none"></div>
 
       <main class="viewer">
         <div class="card">
@@ -27,7 +33,9 @@
           <div class="meta">
             <h2 id="video-title">No video</h2>
             <div id="video-sub" class="sub"></div>
-            <a id="watch-link" class="watch" target="_blank" rel="noreferrer">Watch on YouTube</a>
+            <a id="watch-link" class="watch" target="_blank" rel="noreferrer"
+              >Watch on YouTube</a
+            >
           </div>
         </div>
 
@@ -35,7 +43,10 @@
       </main>
 
       <footer>
-        <small class="muted">Autoplay is muted for reliability. Player advances and reverses automatically.</small>
+        <small class="muted"
+          >Autoplay is muted for reliability. Player advances and reverses
+          automatically.</small
+        >
       </footer>
     </div>
 

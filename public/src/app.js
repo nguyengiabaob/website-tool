@@ -66,6 +66,11 @@ function createPlayer(videoId) {
 
 function onVideoEnded() {
   if (!videos.length) return;
+  nextVideo();
+}
+
+function nextVideo() {
+  if (!videos.length) return;
   let next = index + direction;
   if (next >= videos.length || next < 0) {
     direction = -direction;
@@ -156,3 +161,13 @@ document.getElementById("more-btn").addEventListener("click", async () => {
     setError(String(e));
   }
 });
+
+// Next and Reverse (direction) controls
+const nextBtn = document.getElementById("next-btn");
+const reverseBtn = document.getElementById("reverse-btn");
+if (nextBtn) nextBtn.addEventListener("click", () => nextVideo());
+if (reverseBtn)
+  reverseBtn.addEventListener("click", () => {
+    direction = -direction;
+    reverseBtn.textContent = direction === 1 ? "Direction: →" : "Direction: ←";
+  });
