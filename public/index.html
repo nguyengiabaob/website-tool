@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>YouTube Shorts Loop</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>YouTube Shorts Loop</h1>
+        <p class="muted">Enter a channel URL (e.g., https://www.youtube.com/@AnimeHouse2658)</p>
+      </header>
+
+      <div class="controls">
+        <input id="channel-input" placeholder="Channel URL" />
+        <button id="fetch-btn">Fetch</button>
+        <button id="more-btn" disabled>Load More</button>
+      </div>
+
+      <div id="error" class="error" style="display:none"></div>
+
+      <main class="viewer">
+        <div class="card">
+          <div class="player-wrap"><div id="player"></div></div>
+          <div class="meta">
+            <h2 id="video-title">No video</h2>
+            <div id="video-sub" class="sub"></div>
+            <a id="watch-link" class="watch" target="_blank" rel="noreferrer">Watch on YouTube</a>
+          </div>
+        </div>
+
+        <div id="thumbs" class="thumbs"></div>
+      </main>
+
+      <footer>
+        <small class="muted">Autoplay is muted for reliability. Player advances and reverses automatically.</small>
+      </footer>
+    </div>
+
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <script src="/src/app.js"></script>
+  </body>
+</html>
