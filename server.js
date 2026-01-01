@@ -1,5 +1,21 @@
 const express = require("express");
-const puppeteer = require("puppeteer");
+let puppeteer;
+let chromeAwsLambda = null;
+try {
+  if (process.env.VERCEL || process.env.AWS_REGION) {
+    chromeAwsLambda = require("chrome-aws-lambda");
+    puppeteer = require("puppeteer-core");
+  } else {
+    puppeteer = require("puppeteer");
+  }
+} catch (e) {
+  try {
+    puppeteer = require("puppeteer");
+  } catch (e2) {
+    console.error("Failed to require puppeteer packages:", e, e2);
+    throw e2 || e;
+  }
+}
 const cors = require("cors");
 const path = require("path");
 require("dotenv").config();
@@ -22,10 +38,31 @@ app.get("/api/puppeteer-scrape", async (req, res) => {
       ? base
       : base.replace(/\/?$/, "") + "/shorts";
 
-    const browser = await puppeteer.launch({
+    // Build Puppeteer launch options and allow overriding executable via env
+    const launchOpts = {
       headless: true,
       args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
+    };
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+      launchOpts.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+    } else {
+      try {
+        const defaultPath =
+          puppeteer.executablePath && puppeteer.executablePath();
+        if (defaultPath) launchOpts.executablePath = defaultPath;
+      } catch (e) {}
+    }
+
+    let browser;
+    try {
+      browser = await puppeteer.launch(launchOpts);
+    } catch (launchErr) {
+      console.error("Puppeteer launch failed:", launchErr);
+      return res.status(500).json({
+        error:
+          "Failed to launch Chromium/Chrome. Set PUPPETEER_EXECUTABLE_PATH to a valid browser binary (e.g. C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe), or run `npm install puppeteer` to download Chromium.",
+      });
+    }
     const page = await browser.newPage();
     await page.setUserAgent(
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -67,6 +104,29 @@ app.get("/api/puppeteer-scrape", async (req, res) => {
     const results = [];
     for (const id of idList) {
       try {
+        // If running under chrome-aws-lambda (Vercel/AWS Lambda), use its args
+        if (chromeAwsLambda) {
+          launchOpts.args = (chromeAwsLambda.args || []).concat(
+            launchOpts.args
+          );
+          launchOpts.headless = chromeAwsLambda.headless;
+          try {
+            // executablePath is async for chrome-aws-lambda
+            launchOpts.executablePath =
+              process.env.PUPPETEER_EXECUTABLE_PATH ||
+              (await chromeAwsLambda.executablePath);
+          } catch (e) {
+            // ignore and let puppeteer-core try
+          }
+        } else if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+          launchOpts.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+        } else {
+          try {
+            const defaultPath =
+              puppeteer.executablePath && puppeteer.executablePath();
+            if (defaultPath) launchOpts.executablePath = defaultPath;
+          } catch (e) {}
+        }
         const watchUrl = `https://www.youtube.com/watch?v=${id}`;
         const p = await browser.newPage();
         await p.setUserAgent(
