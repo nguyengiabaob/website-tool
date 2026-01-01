@@ -12,7 +12,6 @@
     "express": "^4.18.2",
     "node-fetch": "^2.6.7",
     "puppeteer": "^20.9.0",
-    "puppeteer-core": "^20.9.0",
     "chrome-aws-lambda": "^10.1.0"
   },
   "devDependencies": {
