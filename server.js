@@ -45,11 +45,37 @@ app.get("/api/puppeteer-scrape", async (req, res) => {
     };
     if (process.env.PUPPETEER_EXECUTABLE_PATH) {
       launchOpts.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+    }
+
+    // If running on Vercel/AWS-like environment and chrome-aws-lambda is available,
+    // prefer its args/executablePath before launching the initial browser.
+    if (chromeAwsLambda) {
+      launchOpts.args = (chromeAwsLambda.args || []).concat(
+        launchOpts.args || []
+      );
+      launchOpts.headless = chromeAwsLambda.headless;
+      try {
+        // chrome-aws-lambda exposes an async `executablePath` on some platforms
+        const execPath = await chromeAwsLambda.executablePath;
+        if (execPath)
+          launchOpts.executablePath =
+            process.env.PUPPETEER_EXECUTABLE_PATH || execPath;
+      } catch (e) {
+        // ignore - puppeteer-core will try its best
+      }
+      // ensure sandbox flags are present for serverless environments
+      launchOpts.args = Array.from(
+        new Set(
+          launchOpts.args.concat(["--no-sandbox", "--disable-setuid-sandbox"])
+        )
+      );
     } else {
+      // Local/default fallback: try puppeteer's default bundled chromium path
       try {
         const defaultPath =
           puppeteer.executablePath && puppeteer.executablePath();
-        if (defaultPath) launchOpts.executablePath = defaultPath;
+        if (!launchOpts.executablePath && defaultPath)
+          launchOpts.executablePath = defaultPath;
       } catch (e) {}
     }
 
