@@ -44,7 +44,8 @@ module.exports = async (req, res) => {
       console.error("Puppeteer launch failed:", launchErr);
       return res.status(500).json({
         error:
-          "Failed to launch Chromium/Chrome. On Vercel use `chrome-aws-lambda` + `puppeteer-core` (included). If you prefer a system Chrome, set `PUPPETEER_EXECUTABLE_PATH` to its path.",
+          "Failed to launch Chromium/Chrome. On Vercel use `chrome-aws-lambda` + `puppeteer-core` (included). If you prefer a system Chrome, set `PUPPETEER_EXECUTABLE_PATH` to its path." +
+          launchErr,
       });
     }
 
