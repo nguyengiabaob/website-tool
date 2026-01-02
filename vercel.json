@@ -5,7 +5,5 @@
       "maxDuration": 60
     }
   },
-  "includeFiles": [
-    "node_modules/chrome-aws-lambda/**"
-  ]
+  "includeFiles": ["node_modules/chrome-aws-lambda/**"]
 }
