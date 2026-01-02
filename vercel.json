@@ -4,13 +4,5 @@
       "memory": 1024,
       "maxDuration": 60
     }
-  },
-
-  "builds": [
-    {
-      "src": "api/**/*.js",
-      "use": "@vercel/node",
-      "config": { "includeFiles": ["node_modules/chrome-aws-lambda/**"] }
-    }
-  ]
+  }
 }
