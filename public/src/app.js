@@ -1,7 +1,7 @@
 let player;
 let videos = [];
 let index = 0;
-let direction = 1; // 1 forward, -1 backward
+let direction = 1; // 1 forward, -1 backward // mới
 
 function setError(msg) {
   const el = document.getElementById("error");
