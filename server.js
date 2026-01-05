@@ -252,7 +252,7 @@ app.get("/api/puppeteer-scrape", async (req, res) => {
     return res.json({ videos: results });
   } catch (err) {
     console.error("puppeteer-scrape error", err);
-    res.status(500).json({ error: "Scrape failed" + err });
+    res.status(500).json({ error: "Scrape failed" });
   }
 });
 
