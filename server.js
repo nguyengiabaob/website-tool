@@ -1,24 +1,24 @@
 const express = require("express");
 let puppeteer;
-let chromeAwsLambda = null;
+let chromium = null;
 try {
-  if (process.env.VERCEL || process.env.AWS_REGION) {
-    chromeAwsLambda = require("chrome-aws-lambda");
-    puppeteer = require("puppeteer-core");
-  } else {
-    puppeteer = require("puppeteer");
-  }
+  // Always prefer puppeteer-core and @sparticuz/chromium for serverless (Vercel/AWS).
+  chromium = require("@sparticuz/chromium");
+  puppeteer = require("puppeteer-core");
 } catch (e) {
-  try {
-    puppeteer = require("puppeteer");
-  } catch (e2) {
-    console.error("Failed to require puppeteer packages:", e, e2);
-    throw e2 || e;
-  }
+  // Provide a clearer error if dependencies are missing.
+  console.error("Failed to require @sparticuz/chromium or puppeteer-core:", e);
+  throw e;
 }
 const cors = require("cors");
+const fs = require("fs");
 const path = require("path");
 require("dotenv").config();
+
+// Sanitize environment for Vercel Dev local execution
+if (process.env.VERCEL_ENV === "development") {
+  delete process.env.PUPPETEER_EXECUTABLE_PATH;
+}
 
 const app = express();
 app.use(cors());
@@ -39,55 +39,96 @@ app.get("/api/puppeteer-scrape", async (req, res) => {
       : base.replace(/\/?$/, "") + "/shorts";
 
     // Build Puppeteer launch options and allow overriding executable via env
+    // Build Puppeteer launch options and allow overriding executable via env
     const launchOpts = {
       headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+      ],
     };
-    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-      launchOpts.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
-    }
 
-    // If running on Vercel/AWS-like environment and chrome-aws-lambda is available,
-    // prefer its args/executablePath before launching the initial browser.
-    if (chromeAwsLambda) {
-      launchOpts.args = (chromeAwsLambda.args || []).concat(
-        launchOpts.args || []
-      );
-      launchOpts.headless = chromeAwsLambda.headless;
-      try {
-        // chrome-aws-lambda exposes an async `executablePath` on some platforms
-        const execPath = await chromeAwsLambda.executablePath;
-        if (execPath)
-          launchOpts.executablePath =
-            process.env.PUPPETEER_EXECUTABLE_PATH || execPath;
-      } catch (e) {
-        // ignore - puppeteer-core will try its best
+    // Vercel / Serverless environment (if running there, and not local dev)
+    if (
+      (process.env.AWS_EXECUTION_ENV || process.env.VERCEL) &&
+      process.env.VERCEL_ENV !== "development"
+    ) {
+      if (chromium) {
+        launchOpts.args = (chromium.args || []).concat(launchOpts.args);
+        launchOpts.headless = chromium.headless;
+        try {
+          launchOpts.executablePath = await chromium.executablePath();
+        } catch (e) {}
       }
-      // ensure sandbox flags are present for serverless environments
-      launchOpts.args = Array.from(
-        new Set(
-          launchOpts.args.concat(["--no-sandbox", "--disable-setuid-sandbox"])
-        )
-      );
+    } else if (
+      process.env.PUPPETEER_EXECUTABLE_PATH &&
+      fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)
+    ) {
+      // Manual override
+      launchOpts.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
     } else {
-      // Local/default fallback: try puppeteer's default bundled chromium path
+      // Local dev fallback
       try {
-        const defaultPath =
-          puppeteer.executablePath && puppeteer.executablePath();
-        if (!launchOpts.executablePath && defaultPath)
-          launchOpts.executablePath = defaultPath;
-      } catch (e) {}
+        const p = require("puppeteer");
+        if (p.executablePath) launchOpts.executablePath = p.executablePath();
+      } catch (e) {
+        try {
+          // try sparticuz first if available
+          if (chromium) {
+            const exe = await chromium.executablePath();
+            if (exe) launchOpts.executablePath = exe;
+          }
+        } catch (e2) {
+          console.log(
+            "Local fallback: could not get chromium path via sparticuz or puppeteer."
+          );
+        }
+      }
     }
 
     let browser;
     try {
       browser = await puppeteer.launch(launchOpts);
     } catch (launchErr) {
-      console.error("Puppeteer launch failed:", launchErr);
-      return res.status(500).json({
-        error:
-          "Failed to launch Chromium/Chrome. Set PUPPETEER_EXECUTABLE_PATH to a valid browser binary (e.g. C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe), or run `npm install puppeteer` to download Chromium.",
-      });
+      if (launchOpts.executablePath) {
+        console.warn(
+          "Launch with explicit path failed, retrying with bundled browser...",
+          launchErr.message
+        );
+
+        // AGGRESSIVE CLEANUP: Remove Vercel's injected path and reset options
+        delete process.env.PUPPETEER_EXECUTABLE_PATH;
+
+        const retryOpts = {
+          headless: true,
+          args: [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+          ],
+          defaultViewport: { width: 1200, height: 800 },
+        };
+
+        try {
+          const p = require("puppeteer");
+          // Force the use of the bundled executable path to override Vercel's injected env var
+          retryOpts.executablePath = p.executablePath();
+          browser = await p.launch(retryOpts);
+        } catch (retryErr) {
+          console.error("Puppeteer retry failed:", retryErr);
+          return res.status(500).json({
+            error: "Failed to launch Browser (Retry). " + retryErr.message,
+          });
+        }
+      } else {
+        console.error("Puppeteer launch failed:", launchErr);
+        return res.status(500).json({
+          error: "Failed to launch Browser. " + launchErr.message,
+        });
+      }
     }
     const page = await browser.newPage();
     await page.setUserAgent(
@@ -130,17 +171,14 @@ app.get("/api/puppeteer-scrape", async (req, res) => {
     const results = [];
     for (const id of idList) {
       try {
-        // If running under chrome-aws-lambda (Vercel/AWS Lambda), use its args
-        if (chromeAwsLambda) {
-          launchOpts.args = (chromeAwsLambda.args || []).concat(
-            launchOpts.args
-          );
-          launchOpts.headless = chromeAwsLambda.headless;
+        // If running under @sparticuz/chromium (Vercel/AWS Lambda), use its args
+        if (chromium) {
+          launchOpts.args = (chromium.args || []).concat(launchOpts.args);
+          launchOpts.headless = chromium.headless;
           try {
-            // executablePath is async for chrome-aws-lambda
             launchOpts.executablePath =
               process.env.PUPPETEER_EXECUTABLE_PATH ||
-              (await chromeAwsLambda.executablePath);
+              (await chromium.executablePath());
           } catch (e) {
             // ignore and let puppeteer-core try
           }

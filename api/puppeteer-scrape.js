@@ -1,7 +1,13 @@
-const chromium = require("chrome-aws-lambda");
+const chromium = require("@sparticuz/chromium");
 const puppeteer = require("puppeteer-core");
+const fs = require("fs");
 
 module.exports = async (req, res) => {
+  // Sanitize environment for Vercel Dev local execution
+  if (process.env.VERCEL_ENV === "development") {
+    delete process.env.PUPPETEER_EXECUTABLE_PATH;
+  }
+
   try {
     const { channelUrl, limit } = req.query;
     if (!channelUrl)
@@ -15,24 +21,39 @@ module.exports = async (req, res) => {
       : base.replace(/\/?$/, "") + "/shorts";
 
     const launchOpts = {
-      args: chromium.args.concat(["--no-sandbox", "--disable-setuid-sandbox"]),
+      args: (chromium.args || []).concat([
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage", // important for serverless
+        "--disable-gpu",
+      ]),
       headless: chromium.headless,
       defaultViewport: { width: 1200, height: 800 },
     };
 
-    // prefer explicit env override
-    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    // Vercel / Serverless environment (ONLY in production/preview, not local dev)
+    if (
+      (process.env.AWS_EXECUTION_ENV || process.env.VERCEL) &&
+      process.env.VERCEL_ENV !== "development"
+    ) {
+      launchOpts.executablePath = await chromium.executablePath();
+    } else if (
+      process.env.PUPPETEER_EXECUTABLE_PATH &&
+      fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)
+    ) {
       launchOpts.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
     } else {
+      // Local development fallback
       try {
-        const exe = await chromium.executablePath;
-        if (exe) launchOpts.executablePath = exe;
+        const p = require("puppeteer");
+        if (p.executablePath) launchOpts.executablePath = p.executablePath();
       } catch (e) {
-        // fall back to puppeteer-core's executable if available (unlikely on Vercel)
+        console.log(
+          "Local fallback: full 'puppeteer' not installed, trying sparticuz/default."
+        );
         try {
-          const defaultPath =
-            puppeteer.executablePath && puppeteer.executablePath();
-          if (defaultPath) launchOpts.executablePath = defaultPath;
+          const exe = await chromium.executablePath();
+          if (exe) launchOpts.executablePath = exe;
         } catch (e2) {}
       }
     }
@@ -41,12 +62,43 @@ module.exports = async (req, res) => {
     try {
       browser = await puppeteer.launch(launchOpts);
     } catch (launchErr) {
-      console.error("Puppeteer launch failed:", launchErr);
-      return res.status(500).json({
-        error:
-          "Failed to launch Chromium/Chrome. On Vercel use `chrome-aws-lambda` + `puppeteer-core` (included). If you prefer a system Chrome, set `PUPPETEER_EXECUTABLE_PATH` to its path." +
-          launchErr,
-      });
+      if (launchOpts.executablePath) {
+        console.warn(
+          "Launch with explicit path failed, retrying with bundled browser...",
+          launchErr.message
+        );
+
+        // AGGRESSIVE CLEANUP: Remove Vercel's injected path and reset options
+        delete process.env.PUPPETEER_EXECUTABLE_PATH;
+
+        const retryOpts = {
+          headless: true,
+          args: [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+          ],
+          defaultViewport: { width: 1200, height: 800 },
+        };
+
+        try {
+          const p = require("puppeteer");
+          // Force the use of the bundled executable path to override Vercel's injected env var
+          retryOpts.executablePath = p.executablePath();
+          browser = await p.launch(retryOpts);
+        } catch (retryErr) {
+          console.error("Puppeteer retry failed:", retryErr);
+          return res.status(500).json({
+            error: "Failed to launch Browser (Retry). " + retryErr.message,
+          });
+        }
+      } else {
+        console.error("Puppeteer launch failed:", launchErr);
+        return res.status(500).json({
+          error: "Failed to launch Browser. " + launchErr.message,
+        });
+      }
     }
 
     const page = await browser.newPage();
@@ -57,7 +109,7 @@ module.exports = async (req, res) => {
 
     await page
       .goto(shortsUrl, { waitUntil: "networkidle2", timeout: 30000 })
-      .catch(() => {});
+      .catch((e) => console.log("Goto error (non-fatal):", e.message));
 
     const start = Date.now();
     const ids = new Set();

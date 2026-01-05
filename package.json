@@ -7,14 +7,15 @@
     "start:dev": "nodemon server.js"
   },
   "dependencies": {
-    "chrome-aws-lambda": "^10.1.0",
-    "puppeteer-core": "^20.9.0",
+    "@sparticuz/chromium": "^131.0.1",
     "cors": "^2.8.5",
     "dotenv": "^16.0.0",
     "express": "^4.18.2",
-    "node-fetch": "^2.6.7"
+    "node-fetch": "^2.6.7",
+    "puppeteer-core": "^23.10.1"
   },
   "devDependencies": {
-    "nodemon": "^2.0.22"
+    "nodemon": "^2.0.22",
+    "puppeteer": "^24.34.0"
   }
 }
