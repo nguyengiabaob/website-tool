@@ -120,7 +120,11 @@ app.get("/api/puppeteer-scrape", async (req, res) => {
         } catch (retryErr) {
           console.error("Puppeteer retry failed:", retryErr);
           return res.status(500).json({
-            error: "Failed to launch Browser (Retry). " + retryErr.message,
+            error:
+              "Failed to launch Browser (Retry). Primary Error: " +
+              launchErr.message +
+              " | Retry Error: " +
+              retryErr.message,
           });
         }
       } else {

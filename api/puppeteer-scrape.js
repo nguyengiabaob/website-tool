@@ -36,7 +36,11 @@ module.exports = async (req, res) => {
       (process.env.AWS_EXECUTION_ENV || process.env.VERCEL) &&
       process.env.VERCEL_ENV !== "development"
     ) {
-      launchOpts.executablePath = await chromium.executablePath();
+      try {
+        launchOpts.executablePath = await chromium.executablePath();
+      } catch (e) {
+        console.error("Failed to get chromium executable path:", e);
+      }
     } else if (
       process.env.PUPPETEER_EXECUTABLE_PATH &&
       fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)
@@ -90,7 +94,11 @@ module.exports = async (req, res) => {
         } catch (retryErr) {
           console.error("Puppeteer retry failed:", retryErr);
           return res.status(500).json({
-            error: "Failed to launch Browser (Retry). " + retryErr.message,
+            error:
+              "Failed to launch Browser (Retry). Primary Error: " +
+              launchErr.message +
+              " | Retry Error: " +
+              retryErr.message,
           });
         }
       } else {
