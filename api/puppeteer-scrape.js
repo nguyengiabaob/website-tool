@@ -62,163 +62,121 @@ module.exports = async (req, res) => {
       }
     }
 
-    let browser;
-    try {
-      if (launchOpts.executablePath) {
-        browser = await puppeteer.launch(launchOpts);
-      } else {
-        // Fallback: try launching without specific executablePath if sparticuz failed
-        browser = await puppeteer.launch({
-          ...launchOpts,
-          headless: true, // ensure headless
-        });
-      }
-    } catch (launchErr) {
-      if (launchOpts.executablePath) {
-        console.warn(
-          "Launch with explicit path failed, retrying with bundled browser...",
-          launchErr.message
-        );
-
-        // AGGRESSIVE CLEANUP: Remove Vercel's injected path and reset options
-        delete process.env.PUPPETEER_EXECUTABLE_PATH;
-
-        const retryOpts = {
-          headless: true,
-          args: [
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-          ],
-          defaultViewport: { width: 1200, height: 800 },
-        };
+    // Race against a 50s timeout to generate a proper JSON response before Vercel kills it
+    const scrapePromise = (async () => {
+        let browser;
+        try {
+            if (launchOpts.executablePath) {
+                browser = await puppeteer.launch(launchOpts);
+            } else {
+                 browser = await puppeteer.launch({
+                    ...launchOpts,
+                    headless: true, // Use new headless mode (true = new in v22+)
+                    args: [...launchOpts.args, "--disable-extensions", "--disable-notifications"]
+                 });
+            }
+        } catch (launchErr) {
+            console.error("Puppeteer launch failed:", launchErr);
+            throw new Error("Failed to launch Browser. " + launchErr.message);
+        }
 
         try {
-          const p = require("puppeteer");
-          // Force the use of the bundled executable path to override Vercel's injected env var
-          retryOpts.executablePath = p.executablePath();
-          browser = await p.launch(retryOpts);
-        } catch (retryErr) {
-          console.error("Puppeteer retry failed:", retryErr);
-          return res.status(500).json({
-            error:
-              "Failed to launch Browser (Retry). Primary Error: " +
-              launchErr.message +
-              " | Retry Error: " +
-              retryErr.message,
-          });
-        }
-      } else {
-        console.error("Puppeteer launch failed:", launchErr);
-        return res.status(500).json({
-          error: "Failed to launch Browser. " + launchErr.message,
-        });
-      }
-    }
+            const page = await browser.newPage();
+            // Block heavy resources
+            await page.setRequestInterception(true);
+            page.on("request", (req) => {
+                const r = req.resourceType();
+                if (["image", "stylesheet", "font"].includes(r)) req.abort();
+                else req.continue();
+            });
 
-    const page = await browser.newPage();
-    await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    );
-    await page.setViewport({ width: 1200, height: 800 });
+            await page.setUserAgent(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            );
+            await page.setViewport({ width: 1200, height: 800 }); // Fix width typo 120 -> 1200
 
-    await page
-      .goto(shortsUrl, { waitUntil: "networkidle2", timeout: 30000 })
-      .catch((e) => console.log("Goto error (non-fatal):", e.message));
+            await page.goto(shortsUrl, { waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
 
-    const start = Date.now();
-    const ids = new Set();
-    while (ids.size < max && Date.now() - start < 20000) {
-      const newIds = await page.evaluate(() => {
-        const out = [];
-        document
-          .querySelectorAll('a[href*="/shorts/"], a[href*="watch?v="]')
-          .forEach((a) => {
-            const href = a.getAttribute("href");
-            if (!href) return;
-            let id = null;
-            if (href.includes("/shorts/"))
-              id = href.split("/shorts/").pop().split(/[?#]/)[0];
-            else if (href.includes("watch?v=")) {
-              try {
-                id = new URL(href, "https://youtube.com").searchParams.get("v");
-              } catch (e) {}
+            const start = Date.now();
+            const ids = new Set();
+            // Reduce max scroll time to 15s
+            while (ids.size < max && Date.now() - start < 15000) {
+                const newIds = await page.evaluate(() => {
+                    const out = [];
+                    document.querySelectorAll('a[href*="/shorts/"], a[href*="watch?v="]').forEach((a) => {
+                        const href = a.getAttribute("href");
+                        if (!href) return;
+                        let id = null;
+                        if (href.includes("/shorts/")) id = href.split("/shorts/").pop().split(/[?#]/)[0];
+                        else if (href.includes("watch?v=")) {
+                            try { id = new URL(href, "https://youtube.com").searchParams.get("v"); } catch (e) {}
+                        }
+                        if (id) out.push(id);
+                    });
+                    return out;
+                });
+                newIds.forEach((i) => ids.add(i));
+                await page.evaluate(() => window.scrollBy(0, window.innerHeight));
+                await new Promise((r) => setTimeout(r, 500));
             }
-            if (id) out.push(id);
-          });
-        return out;
-      });
-      newIds.forEach((i) => ids.add(i));
-      await page.evaluate(() => window.scrollBy(0, window.innerHeight));
-      await new Promise((resolve) => setTimeout(resolve, 700));
-    }
 
-    const idList = Array.from(ids).slice(0, max);
-    const results = [];
-    for (const id of idList) {
-      try {
-        const watchUrl = `https://www.youtube.com/watch?v=${id}`;
-        const p = await browser.newPage();
-        await p.setUserAgent(
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        );
-        await p
-          .goto(watchUrl, { waitUntil: "networkidle2", timeout: 20000 })
-          .catch(() => {});
-        const seconds = await p.evaluate(() => {
-          try {
-            return Number(
-              window.ytInitialPlayerResponse?.videoDetails?.lengthSeconds || 0
-            );
-          } catch (e) {
-            return 0;
-          }
-        });
-        let duration = seconds || 0;
-        if (!duration) {
-          const meta = await p.$('meta[itemprop="duration"]');
-          if (meta) {
-            const content = await (
-              await meta.getProperty("content")
-            ).jsonValue();
-            const m = String(content).match(
-              /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/
-            );
-            if (m)
-              duration =
-                Number(m[1] || 0) * 3600 +
-                Number(m[2] || 0) * 60 +
-                Number(m[3] || 0);
-          }
+            const idList = Array.from(ids).slice(0, max);
+            const results = [];
+            
+            // Parallelize video detail fetching slightly (batches of 3) or just reduce timeouts
+            // For stability, let's just do sequential but with low timeout
+            for (const id of idList) {
+                if (Date.now() - start > 45000) break; // Hard stop if approaching timeout
+                try {
+                    const watchUrl = `https://www.youtube.com/watch?v=${id}`;
+                    const p = await browser.newPage();
+                    // Block resources on new page too
+                    await p.setRequestInterception(true);
+                    p.on("request", (req) => {
+                         if (["image", "stylesheet", "font"].includes(req.resourceType())) req.abort();
+                         else req.continue();
+                    });
+                    
+                    await p.goto(watchUrl, { waitUntil: "domcontentloaded", timeout: 5000 }).catch(() => {});
+                    
+                    // Quick evaluate
+                    const duration = await p.evaluate(() => {
+                        try {
+                            return Number(window.ytInitialPlayerResponse?.videoDetails?.lengthSeconds || 0);
+                        } catch(e) { return 0; }
+                    });
+                    
+                    const title = await p.evaluate(() => document.title || "").catch(() => "");
+                    await p.close();
+                    
+                    if (duration && duration <= 60) {
+                        results.push({
+                            id,
+                            title,
+                            thumbnail: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+                            url: `https://www.youtube.com/watch?v=${id}`,
+                            duration,
+                        });
+                    }
+                } catch (e) { }
+            }
+            await browser.close();
+            return results;
+        } catch (e) {
+            if (browser) await browser.close();
+            throw e;
         }
-        const title = await p
-          .evaluate(
-            () =>
-              document.querySelector("h1.title")?.innerText ||
-              document.title ||
-              ""
-          )
-          .catch(() => "");
-        await p.close();
-        if (duration && duration <= 60) {
-          results.push({
-            id,
-            title,
-            thumbnail: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
-            url: `https://www.youtube.com/watch?v=${id}`,
-            duration,
-          });
-        }
-      } catch (e) {
-        console.debug("per-video failure", id, e && e.message);
-      }
-    }
+    })();
 
-    await browser.close();
-    return res.json({ videos: results });
-  } catch (err) {
-    console.error("puppeteer-scrape error", err);
-    res.status(500).json({ error: "Scrape failed" + err });
-  }
+    try {
+        // Enforce 55s timeout
+        const results = await Promise.race([
+            scrapePromise,
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Function Timeout")), 55000))
+        ]);
+        return res.json({ videos: results });
+    } catch (err) {
+        console.error("Scrape error:", err);
+        return res.status(500).json({ error: err.message || "Scrape failed" });
+    }
 };
