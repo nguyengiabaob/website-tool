@@ -126,9 +126,9 @@ document.getElementById("fetch-btn").addEventListener("click", async () => {
   if (!url) return setError("Enter a channel URL");
   try {
     const res = await fetch(
-      "/api/puppeteer-scrape?channelUrl=" +
-        encodeURIComponent(url) +
-        "&limit=20"
+      "/api/puppeteer-scrape?channelUrl=" + encodeURIComponent(url)
+      //  +
+      // "&limit=20"
     );
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
