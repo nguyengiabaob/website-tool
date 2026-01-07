@@ -151,7 +151,7 @@ module.exports = async (req, res) => {
       });
       newIds.forEach((i) => ids.add(i));
       await page.evaluate(() => window.scrollBy(0, window.innerHeight));
-      await page.waitForTimeout(700);
+      await new Promise((resolve) => setTimeout(resolve, 700));
     }
 
     const idList = Array.from(ids).slice(0, max);
