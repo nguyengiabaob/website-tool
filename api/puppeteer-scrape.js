@@ -64,7 +64,15 @@ module.exports = async (req, res) => {
 
     let browser;
     try {
-      browser = await puppeteer.launch(launchOpts);
+      if (launchOpts.executablePath) {
+        browser = await puppeteer.launch(launchOpts);
+      } else {
+        // Fallback: try launching without specific executablePath if sparticuz failed
+        browser = await puppeteer.launch({
+          ...launchOpts,
+          headless: true, // ensure headless
+        });
+      }
     } catch (launchErr) {
       if (launchOpts.executablePath) {
         console.warn(
