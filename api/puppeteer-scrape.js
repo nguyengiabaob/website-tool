@@ -81,8 +81,12 @@ module.exports = async (req, res) => {
         await page.setUserAgent(
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         );
+        await page.setExtraHTTPHeaders({
+          "Accept-Language": "en-US,en;q=0.9",
+        });
         await page.setViewport({ width: 1200, height: 800 });
 
+        console.log("Navigating to:", shortsUrl);
         await page
           .goto(shortsUrl, { waitUntil: "networkidle2", timeout: 30000 })
           .catch((e) => console.log("Goto error:", e.message));
@@ -90,12 +94,47 @@ module.exports = async (req, res) => {
         const pageTitle = await page.title();
         console.log("Page Title:", pageTitle);
 
+        // Check for common consent popups (often happens on serverless IPs)
+        try {
+          const consentSelectors = [
+            'button[aria-label="Accept all"]',
+            'button[aria-label="Agree to the use of cookies and other data for the purposes described"]',
+            "ytd-button-renderer.ytd-consent-bump-v2-lightbox button", // generic consent bump
+            // simplified text search if aria-label fails
+            "//button[contains(., 'Accept all')]",
+            "//button[contains(., 'Reject all')]",
+          ];
+
+          for (const s of consentSelectors) {
+            let btn;
+            if (s.startsWith("//")) {
+              const [el] = await page.$x(s);
+              btn = el;
+            } else {
+              btn = await page.$(s);
+            }
+
+            if (btn) {
+              console.log("Consent button found. Clicking...", s);
+              await btn.click();
+              // Wait for navigation or modal close
+              await new Promise((r) => setTimeout(r, 2000));
+              break;
+            }
+          }
+        } catch (err) {
+          console.log("Consent check error (non-fatal):", err.message);
+        }
+
         // Wait for at least one short to appear
         try {
           await page.waitForSelector('a[href*="/shorts/"]', { timeout: 10000 });
         } catch (e) {
           console.log(
-            "Timeout waiting for shorts selector - might be empty or bot check"
+            "Timeout waiting for shorts selector. Page content hint: " +
+              (await page.evaluate(() =>
+                document.body.innerText.substring(0, 200)
+              ))
           );
         }
 
@@ -216,6 +255,7 @@ module.exports = async (req, res) => {
         //   setTimeout(() => reject(new Error("Function Timeout")), 55000)
         // ),
       ]);
+      console.log(`Scrape finished. Found ${results.length} videos.`);
       return res.json({ videos: results });
     } catch (err) {
       console.error("Scrape error:", err);
