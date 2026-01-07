@@ -132,7 +132,7 @@ document.getElementById("fetch-btn").addEventListener("click", async () => {
     );
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
-      return setError(j.error || "Fetch failed" + j.error);
+      return setError(j.error || "Fetch failed" + JSON.stringify(res));
     }
     const j = await res.json();
     loadList(j.videos || []);
