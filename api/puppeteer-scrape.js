@@ -120,70 +120,76 @@ module.exports = async (req, res) => {
                 await new Promise((r) => setTimeout(r, 500));
             }
 
+            await page.close(); // Save memory: close list page before processing details
+
             const idList = Array.from(ids).slice(0, max);
             const results = [];
             
             // Optimize: Reuse a single page for details to save memory/overhead
             // Also enforce strict timeboxing.
             const detailPage = await browser.newPage();
-            await detailPage.setRequestInterception(true);
-            detailPage.on("request", (req) => {
-                const r = req.resourceType();
-                 if (["image", "stylesheet", "font", "media"].includes(r)) req.abort();
-                 else req.continue();
-            });
+            try {
+                await detailPage.setRequestInterception(true);
+                detailPage.on("request", (req) => {
+                    const r = req.resourceType();
+                    if (["image", "stylesheet", "font", "media"].includes(r)) req.abort();
+                    else req.continue();
+                });
 
-            for (const id of idList) {
-                // If we are within 5 seconds of the 50s timeout (i.e. > 45s elapsed), stop and return what we have.
-                if (Date.now() - start > 40000) break; 
-                
-                try {
-                    const watchUrl = `https://www.youtube.com/watch?v=${id}`;
+                for (const id of idList) {
+                    // If we are within 10 seconds of the 60s timeout (i.e. > 50s elapsed), stop and return what we have.
+                    // Vercel limit is strict.
+                    if (Date.now() - start > 45000) break; 
                     
-                    // Race navigation with a short 3s timeout
-                    await Promise.race([
-                        detailPage.goto(watchUrl, { waitUntil: "domcontentloaded" }),
-                        new Promise(r => setTimeout(r, 3000))
-                    ]).catch(() => {});
-                    
-                     // Quick evaluate with safety
-                    const data = await detailPage.evaluate(() => {
-                        try {
-                            const playerResp = window.ytInitialPlayerResponse;
-                            const d = playerResp?.videoDetails;
-                            return {
-                                duration: Number(d?.lengthSeconds || 0),
-                                title: d?.title || document.title || ""
-                            };
-                        } catch(e) { return { duration: 0, title: "" }; }
-                    });
-
-                    let { duration, title } = data;
-
-                    // Fallback for duration if not in player response (rare for valid watch pages)
-                    if (!duration) {
-                         // Try one more selector but don't wait long
-                         const metaDuration = await detailPage.$eval('meta[itemprop="duration"]', el => el.content).catch(() => null);
-                         if (metaDuration) {
-                            const m = String(metaDuration).match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
-                            if (m) duration = Number(m[1]||0)*3600 + Number(m[2]||0)*60 + Number(m[3]||0);
-                         }
-                    }
-
-                    if (duration && duration <= 60) {
-                        results.push({
-                            id,
-                            title,
-                            thumbnail: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
-                            url: `https://www.youtube.com/watch?v=${id}`,
-                            duration,
+                    try {
+                        const watchUrl = `https://www.youtube.com/watch?v=${id}`;
+                        
+                        // Race navigation with a short 3s timeout
+                        await Promise.race([
+                            detailPage.goto(watchUrl, { waitUntil: "domcontentloaded" }),
+                            new Promise(r => setTimeout(r, 4000))
+                        ]).catch(() => {});
+                        
+                        // Quick evaluate with safety
+                        const data = await detailPage.evaluate(() => {
+                            try {
+                                const playerResp = window.ytInitialPlayerResponse;
+                                const d = playerResp?.videoDetails;
+                                return {
+                                    duration: Number(d?.lengthSeconds || 0),
+                                    title: d?.title || document.title || ""
+                                };
+                            } catch(e) { return { duration: 0, title: "" }; }
                         });
+
+                        let { duration, title } = data;
+
+                        // Fallback for duration
+                        if (!duration) {
+                            const metaDuration = await detailPage.$eval('meta[itemprop="duration"]', el => el.content).catch(() => null);
+                            if (metaDuration) {
+                                const m = String(metaDuration).match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+                                if (m) duration = Number(m[1]||0)*3600 + Number(m[2]||0)*60 + Number(m[3]||0);
+                            }
+                        }
+
+                        if (duration && duration <= 60) {
+                            results.push({
+                                id,
+                                title,
+                                thumbnail: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+                                url: `https://www.youtube.com/watch?v=${id}`,
+                                duration,
+                            });
+                        }
+                    } catch (e) { 
+                        // Ignore per-video errors
                     }
-                } catch (e) { 
-                    // Ignore per-video errors
                 }
+            } finally {
+               await detailPage.close();
             }
-            await detailPage.close(); // Clean up detail page
+            
             await browser.close();
             return results;
         } catch (e) {

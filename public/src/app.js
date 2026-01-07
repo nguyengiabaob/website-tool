@@ -128,11 +128,13 @@ document.getElementById("fetch-btn").addEventListener("click", async () => {
     const res = await fetch(
       "/api/puppeteer-scrape?channelUrl=" +
         encodeURIComponent(url) +
-        "&limit=60"
+        "&limit=20"
     );
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
-      return setError(j.error || "Fetch failed" + JSON.stringify(res));
+      return setError(
+        j.error || `Fetch failed: ${res.status} ${res.statusText}`
+      );
     }
     const j = await res.json();
     loadList(j.videos || []);
