@@ -123,32 +123,53 @@ module.exports = async (req, res) => {
             const idList = Array.from(ids).slice(0, max);
             const results = [];
             
-            // Parallelize video detail fetching slightly (batches of 3) or just reduce timeouts
-            // For stability, let's just do sequential but with low timeout
+            // Optimize: Reuse a single page for details to save memory/overhead
+            // Also enforce strict timeboxing.
+            const detailPage = await browser.newPage();
+            await detailPage.setRequestInterception(true);
+            detailPage.on("request", (req) => {
+                const r = req.resourceType();
+                 if (["image", "stylesheet", "font", "media"].includes(r)) req.abort();
+                 else req.continue();
+            });
+
             for (const id of idList) {
-                if (Date.now() - start > 45000) break; // Hard stop if approaching timeout
+                // If we are within 5 seconds of the 50s timeout (i.e. > 45s elapsed), stop and return what we have.
+                if (Date.now() - start > 40000) break; 
+                
                 try {
                     const watchUrl = `https://www.youtube.com/watch?v=${id}`;
-                    const p = await browser.newPage();
-                    // Block resources on new page too
-                    await p.setRequestInterception(true);
-                    p.on("request", (req) => {
-                         if (["image", "stylesheet", "font"].includes(req.resourceType())) req.abort();
-                         else req.continue();
-                    });
                     
-                    await p.goto(watchUrl, { waitUntil: "domcontentloaded", timeout: 5000 }).catch(() => {});
+                    // Race navigation with a short 3s timeout
+                    await Promise.race([
+                        detailPage.goto(watchUrl, { waitUntil: "domcontentloaded" }),
+                        new Promise(r => setTimeout(r, 3000))
+                    ]).catch(() => {});
                     
-                    // Quick evaluate
-                    const duration = await p.evaluate(() => {
+                     // Quick evaluate with safety
+                    const data = await detailPage.evaluate(() => {
                         try {
-                            return Number(window.ytInitialPlayerResponse?.videoDetails?.lengthSeconds || 0);
-                        } catch(e) { return 0; }
+                            const playerResp = window.ytInitialPlayerResponse;
+                            const d = playerResp?.videoDetails;
+                            return {
+                                duration: Number(d?.lengthSeconds || 0),
+                                title: d?.title || document.title || ""
+                            };
+                        } catch(e) { return { duration: 0, title: "" }; }
                     });
-                    
-                    const title = await p.evaluate(() => document.title || "").catch(() => "");
-                    await p.close();
-                    
+
+                    let { duration, title } = data;
+
+                    // Fallback for duration if not in player response (rare for valid watch pages)
+                    if (!duration) {
+                         // Try one more selector but don't wait long
+                         const metaDuration = await detailPage.$eval('meta[itemprop="duration"]', el => el.content).catch(() => null);
+                         if (metaDuration) {
+                            const m = String(metaDuration).match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+                            if (m) duration = Number(m[1]||0)*3600 + Number(m[2]||0)*60 + Number(m[3]||0);
+                         }
+                    }
+
                     if (duration && duration <= 60) {
                         results.push({
                             id,
@@ -158,8 +179,11 @@ module.exports = async (req, res) => {
                             duration,
                         });
                     }
-                } catch (e) { }
+                } catch (e) { 
+                    // Ignore per-video errors
+                }
             }
+            await detailPage.close(); // Clean up detail page
             await browser.close();
             return results;
         } catch (e) {
